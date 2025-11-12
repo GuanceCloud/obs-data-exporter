@@ -1,23 +1,21 @@
-# MkDocs Translator
+# OBS Data Exporter
 
-MkDocs Translator 是一个自动化工具，用于将 MkDocs 文档库从一种语言翻译为另一种语言。它使用 Dify AI API 进行翻译，并保持文档的目录结构和 Markdown 格式。
+OBS Data Exporter 是一个用于从远程 API 获取数据并导出到 CSV 文件的工具。
 
 ## 特性
 
-- 使用 Dify AI API 进行高质量的文档翻译
-- 保持原始文档的目录结构和 Markdown 格式
-- 支持增量翻译，避免重复处理未更改的文件
-- 自动复制非翻译文件（如图片、CSS等）到目标目录
-- 提供详细的翻译进度和结果报告
-- 支持流式翻译响应，实时显示翻译进度
+- 调用远程 API 获取数据
+- 将数据导出到 CSV 文件
+- 提供详细的进度显示
+- 支持日志记录
 
 ## 安装
 
-1. 克隆仓库： 
+1. 克隆仓库：
 
 ```bash
-git clone https://github.com/GuanceCloud/mkdocs-translator.git
-cd mkdocs-translator
+git clone <repository-url>
+cd obs-data-exporter
 ```
 
 2. 安装依赖：
@@ -26,67 +24,48 @@ cd mkdocs-translator
 pip install -r requirements.txt
 ```
 
-3. 设置环境变量：
+或者使用 pip 安装：
 
 ```bash
-export DIFY_API_KEY="your-dify-api-key"
+pip install -e .
 ```
 
-4. 运行翻译：
+## 使用方法
+
+### 基本用法
 
 ```bash
-python -m mkdocs_translator.cli \
---source /path/to/source \
---target /path/to/target \
---target-language "英语" \
---user "your-username"
---workers 10
---overwrite-resources
---delete-removed-resources
+obs-data-exporter \
+  --api-url "https://api.example.com/data" \
+  --output "/path/to/output.csv"
 ```
 
-或者在参数中指定 Dify API Key：
+### 使用 API 密钥
+
+可以通过环境变量设置：
 
 ```bash
-python -m mkdocs_translator.cli \
---source /path/to/source \
---target /path/to/target \
---target-language "英语" \
---user "your-username" \
---workers 10
---overwrite-resources
---delete-removed-resources
---api-key "your-dify-api-key"
+export API_KEY="your-api-key"
+obs-data-exporter \
+  --api-url "https://api.example.com/data" \
+  --output "/path/to/output.csv"
 ```
 
-5. 添加黑名单文件：
+或者通过命令行参数：
 
-在源目录中创建一个 .translate-blacklist 文件，文件中的每一行表示一个文件路径，如果文件路径在源目录中，则不会被翻译。
-
-.translate-blacklist 文件示例： 
-
+```bash
+obs-data-exporter \
+  --api-url "https://api.example.com/data" \
+  --output "/path/to/output.csv" \
+  --api-key "your-api-key"
 ```
-# 黑名单文件
-
-# 目录前缀匹配
-datakit/
-integrations/
-
-# 精确匹配
-billing/commericial-version.md
-
-# 通配符匹配
-billing/commericial-*.md
-billing/v?/*.md
-test-*.md
-``` 
 
 ## 注意事项
 
-- 请确保目标目录存在，否则会创建一个新目录。
-- 请确保源目录存在，否则会报错。
-- 请确保 Dify AI API 密钥正确，否则会报错。
-- 请确保用户名正确，否则会报错。
-- 请确保查询语句正确，否则会报错。
-- 请确保响应模式正确，否则会报错。
+- 请确保 API URL 正确且可访问
+- 请确保有写入输出文件的权限
+- 日志文件会保存在当前工作目录的 `export.log` 文件中
 
+## 开发
+
+当前版本包含基本的框架结构，具体的 API 调用和 CSV 导出逻辑需要根据实际需求进行实现。

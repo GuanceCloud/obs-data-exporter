@@ -5,15 +5,14 @@ setup(
     version="0.1.0",
     packages=find_packages(),
     install_requires=[
-        'openai>=1.0.0',
         'click>=8.0.0',
-        'pyyaml>=6.0.0',
         'tqdm>=4.65.0',
-        'pathlib>=1.0.1',
+        'requests>=2.31.0',
+        'python-dateutil>=2.8.0',
     ],
     entry_points={
         'console_scripts': [
-            'obs-data-exporter=obs_data_exporter.cli:translate',
+            'obs-data-exporter=exporter.cli:export',
         ],
     },
     author="Guance Cloud",
