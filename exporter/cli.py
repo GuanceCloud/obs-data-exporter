@@ -12,7 +12,7 @@ from .exporter import DataExporter
 @click.option('--dql', type=str, required=True, help='DQL 查询语句')
 @click.option('--start-time', type=str, required=True, help='开始时间（ISO 格式，如：2024-01-01T00:00:00+08:00）')
 @click.option('--end-time', type=str, required=True, help='结束时间（ISO 格式，如：2024-01-01T23:59:59+08:00）')
-@click.option('--time-slice', type=int, default=5, help='时间切片大小（分钟），用于将时间范围分割成多个段进行导出，默认 5 分钟')
+@click.option('--time-slice', type=int, default=1, help='时间切片大小（分钟），用于将时间范围分割成多个段进行导出，默认 5 分钟')
 @click.option('--max-rows', type=int, default=10000, help='最大导出行数（可选，达到此数量或数据查询完毕时停止，默认导出 10000 行）')
 def export(api_domain: str, output: str, api_key: Optional[str], dql: str, start_time: str, end_time: str, time_slice: int, max_rows: Optional[int]):
     """从远程 API 获取数据并导出到 CSV 文件"""
@@ -34,23 +34,19 @@ def export(api_domain: str, output: str, api_key: Optional[str], dql: str, start
     logging.info(f"开始时间: {start_time} - 结束时间: {end_time} - 时间切片: {time_slice}分钟 - 最大行数: {max_rows}")
     
     try:
-        # 获取数据（使用时间切片）
+        # 获取数据（使用时间切片），并在每次切片后自动导出
         data = exporter.fetch_data_with_time_slices(
             start_time=start_time,
             end_time=end_time,
             time_slice_minutes=time_slice,
             max_rows=max_rows,
             position=0,
-            desc="Fetching data"
+            desc="Fetching data",
+            output_path=output_path  # 传递输出路径，在每次切片后自动导出
         )
-        
-        # 导出到 CSV
-        exporter.export_to_csv(
-            data=data,
-            output_path=output_path,
-            position=1,
-            desc="Exporting to CSV"
-        )
+
+        # 显示最终导出完成信息
+        logging.info(f"所有数据导出完成 - 共导出 {len(data)} 条数据到 {output_path}")
         
         count = len(data)
         success = True
