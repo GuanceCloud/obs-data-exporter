@@ -224,7 +224,8 @@ class DataExporter:
 
     def fetch_data_with_time_slices(self, start_time: str, end_time: str, time_slice_minutes: int = 5,
                                   max_rows: Optional[int] = None, position: int = 0, desc: str = "Fetching data",
-                                  output_path: Optional[Path] = None) -> List[Dict]:
+                                  output_path: Optional[Path] = None, resume_from_slice: int = 1,
+                                  resume_context: Optional[Dict] = None) -> List[Dict]:
         """
         按时间切片获取数据
 
@@ -236,6 +237,8 @@ class DataExporter:
             position: 进度条位置
             desc: 进度条描述
             output_path: 输出文件路径（可选，如果提供则在每次切片后导出当前数据）
+            resume_from_slice: 从第几个切片开始恢复（用于断点续传，默认1）
+            resume_context: 恢复上下文，包含游标信息等（用于精确断点续传）
 
         Returns:
             返回的数据列表
@@ -247,21 +250,47 @@ class DataExporter:
             time_slices = self._generate_time_slices(start_time, end_time, time_slice_minutes)
             total_slices = len(time_slices)
 
-            self.logger.info(f"开始按时间切片获取数据 - {desc} - 开始时间: {start_time} - 结束时间: {end_time} - 切片大小: {time_slice_minutes}分钟 - 共 {total_slices} 个切片")
+            # 处理断点续传：跳过已处理的切片
+            if resume_from_slice > 1:
+                if resume_from_slice <= len(time_slices):
+                    time_slices = time_slices[resume_from_slice - 1:]
+                    self.logger.info(f"从第 {resume_from_slice} 个切片开始恢复，共 {len(time_slices)} 个切片待处理")
+                else:
+                    self.logger.warning(f"恢复切片编号 {resume_from_slice} 超出范围，使用默认值1")
+                    resume_from_slice = 1
+
+            actual_total_slices = len(time_slices)
+            self.logger.info(f"开始按时间切片获取数据 - {desc} - 开始时间: {start_time} - 结束时间: {end_time} - 切片大小: {time_slice_minutes}分钟 - 共 {actual_total_slices} 个切片")
 
             # 初始化进度条 - 显示总体信息
-            if position in self.progress_bars and self.current_tasks.get(position) == desc:
-                init_status = f"{desc} [准备处理，共 {total_slices} 个时间切片]"
-                self.progress_bars[position].set_description(init_status)
-                self.progress_bars[position].refresh()
+            def update_main_progress(completed_slices, total_data_count):
+                if position in self.progress_bars and self.current_tasks.get(position) == desc:
+                    progress_status = f"{desc} [已完成 {completed_slices}/{actual_total_slices} 个切片"
+                    if resume_from_slice > 1:
+                        progress_status += f"（从第 {resume_from_slice} 个切片恢复）"
+                    progress_status += "]"
+                    if max_rows:
+                        progress_status += f" [累计 {total_data_count}/{max_rows} 条数据]"
+                    else:
+                        progress_status += f" [累计 {total_data_count} 条数据]"
+                    self.progress_bars[position].set_description(progress_status)
+                    self.progress_bars[position].refresh()
+
+            # 显示初始状态
+            update_main_progress(0, 0)
 
             all_data = []
             processed_slices = 0
             exported_count = 0  # 已导出到文件的数据量
 
+            # 为每个切片创建独立的进度条
+            slice_progress_positions = {}
+            current_slice_info = None
+            current_slice_exported = 0  # 当前切片已导出的数据量
+
             # 定义页面回调函数，用于在每一页数据获取完成后导出
-            def page_export_callback(page_data, page_num, total_pages):
-                nonlocal all_data, exported_count
+            def page_export_callback(page_data, page_num, total_pages, context=None):
+                nonlocal all_data, exported_count, current_slice_info, current_slice_exported
 
                 # 计算本次新增的数据
                 previous_count = len(all_data)
@@ -269,16 +298,17 @@ class DataExporter:
                 new_data_count = len(all_data) - previous_count
                 new_data = all_data[previous_count:] if new_data_count > 0 else []
 
-                # 更新主进度条，显示实时的累计数据量
-                if position in self.progress_bars and self.current_tasks.get(position) == desc:
-                    current_slice = processed_slices + 1  # 当前正在处理的切片
-                    current_status = f"{desc} [切片 {current_slice}/{total_slices}：进行中]"
-                    if max_rows:
-                        current_status += f" [累计 {len(page_data)}/{max_rows} 条数据]"
-                    else:
-                        current_status += f" [累计 {len(page_data)} 条数据]"
-                    self.progress_bars[position].set_description(current_status)
-                    self.progress_bars[position].refresh()
+                # 更新主进度条 - 显示已完成的切片数和累计数据量
+                update_main_progress(processed_slices, exported_count)
+
+                # 更新切片进度条 - 显示切片处理状态和页面信息
+                if current_slice_info:
+                    slice_start, slice_end, slice_position = current_slice_info
+                    if slice_position in self.progress_bars:
+                        current_slice_num = processed_slices + 1
+                        slice_status = f"切片 {current_slice_num}/{total_slices} [{slice_start[:19]} → {slice_end[:19]}] [处理中 - 页面 {page_num}，已导出 {current_slice_exported} 条]"
+                        self.progress_bars[slice_position].set_description(slice_status)
+                        self.progress_bars[slice_position].refresh()
 
                 # 如果提供了输出路径，且有新增数据，且未达到最大行数限制，则追加导出到文件
                 if output_path and new_data and (not max_rows or len(page_data) <= max_rows):
@@ -291,13 +321,34 @@ class DataExporter:
                             is_first_batch=(exported_count == 0)  # 第一次写入时包含表头
                         )
                         exported_count += len(new_data)
+                        current_slice_exported += len(new_data)  # 更新当前切片的导出计数
                         self.logger.info(f"页面 {page_num} 新增数据已追加到 {output_path}（本次追加 {len(new_data)} 条，文件累计 {exported_count} 条）")
+
+                        # 保存断点信息，包含游标信息用于精确恢复
+                        if context:
+                            self._save_checkpoint(
+                                output_path,
+                                processed_slices + 1,
+                                total_slices,
+                                exported_count,
+                                context.get('slice_start', slice_start),
+                                context.get('slice_end', slice_end),
+                                next_cursor_time=context.get('next_cursor_time'),
+                                next_cursor_token=context.get('next_cursor_token'),
+                                current_page=page_num
+                            )
+                        else:
+                            self._save_checkpoint(output_path, processed_slices + 1, total_slices, exported_count, slice_start, slice_end)
+
                     except Exception as export_error:
                         self.logger.error(f"追加页面 {page_num} 数据失败: {export_error}")
                 elif output_path and new_data and max_rows and len(page_data) > max_rows:
                     self.logger.info(f"页面 {page_num} 数据已达到最大行数限制 {max_rows}，跳过追加导出（新增 {len(new_data)} 条，累计 {len(page_data)} 条数据）")
 
             for i, (slice_start, slice_end) in enumerate(time_slices):
+                # 计算实际的切片编号（考虑断点续传）
+                actual_slice_num = (resume_from_slice - 1) + i + 1
+
                 # 计算当前切片允许的最大行数
                 slice_max_rows = None
                 if max_rows:
@@ -307,28 +358,49 @@ class DataExporter:
                         break
                     slice_max_rows = remaining_rows
 
-                # 更新进度条 - 显示开始处理当前切片
-                if position in self.progress_bars and self.current_tasks.get(position) == desc:
-                    current_status = f"{desc} [切片 {i+1}/{total_slices}：{slice_start[:19]} → {slice_end[:19]}]"
-                    if max_rows:
-                        current_status += f" [累计 {len(all_data)}/{max_rows} 条数据]"
-                    else:
-                        current_status += f" [累计 {len(all_data)} 条数据]"
-                    self.progress_bars[position].set_description(current_status)
-                    self.progress_bars[position].refresh()
+                # 为当前切片创建独立的进度条（位置在主进度条之后）
+                slice_position = position + 1 + i  # 主进度条位置之后，从1开始
+                slice_progress_positions[i] = slice_position
 
-                self.logger.info(f"正在处理切片 {i+1}/{total_slices}：{slice_start} 至 {slice_end}")
+                # 设置当前切片信息，用于页面回调中更新进度
+                current_slice_info = (slice_start, slice_end, slice_position)
+
+                # 重置当前切片的导出计数
+                current_slice_exported = 0
+
+                # 创建并初始化切片进度条
+                slice_progress_desc = f"切片 {actual_slice_num}/{total_slices} [{slice_start[:19]} → {slice_end[:19]}] [开始处理]"
+                self._create_progress_bar(slice_position, slice_progress_desc)
+
+                # 立即刷新显示
+                if slice_position in self.progress_bars:
+                    self.progress_bars[slice_position].refresh()
+
+                self.logger.info(f"正在处理切片 {actual_slice_num}/{total_slices}：{slice_start} 至 {slice_end}")
+
+                # 准备恢复上下文（如果有的话）
+                slice_resume_context = None
+                if resume_context and actual_slice_num == resume_from_slice:
+                    slice_resume_context = resume_context
 
                 # 获取当前切片的数据，使用页面回调函数
                 slice_data = self.fetch_data(
                     start_time=slice_start,
                     end_time=slice_end,
                     max_rows=slice_max_rows,
-                    position=position + 1000 + i,  # 远离主进度条的位置
-                    desc=f"切片 {i+1}/{total_slices}",
+                    position=slice_position + 1000,  # 远离切片进度条的位置
+                    desc=f"切片 {actual_slice_num}/{total_slices} 数据获取",
                     show_progress=False,  # 不显示切片级别的详细进度
-                    page_callback=page_export_callback if output_path else None  # 只有当有输出路径时才设置回调
+                    page_callback=page_export_callback if output_path else None,  # 只有当有输出路径时才设置回调
+                    page_callback_context={'slice_start': slice_start, 'slice_end': slice_end},
+                    resume_context=slice_resume_context  # 传递恢复上下文
                 )
+
+                # 标记切片完成
+                if slice_position in self.progress_bars:
+                    final_slice_status = f"切片 {actual_slice_num}/{total_slices} [{slice_start[:19]} → {slice_end[:19]}] [完成，共导出 {current_slice_exported} 条数据]"
+                    self.progress_bars[slice_position].set_description(final_slice_status)
+                    self.progress_bars[slice_position].refresh()
 
                 # 注意：由于使用了回调函数，all_data 已经在回调中更新了
                 processed_slices += 1
@@ -353,12 +425,12 @@ class DataExporter:
                     except Exception as export_error:
                         self.logger.error(f"重新导出截断数据失败: {export_error}")
 
-            # 显示最终完成状态
-            if position in self.progress_bars and self.current_tasks.get(position) == desc:
-                stop_reason = "达到最大行数限制" if (max_rows and len(all_data) >= max_rows) else "所有时间切片处理完毕"
-                final_status = f"{desc} [完成，共 {len(all_data)} 条数据，处理了 {processed_slices}/{total_slices} 个切片，{stop_reason}]"
-                self.progress_bars[position].set_description(final_status)
-                self.progress_bars[position].refresh()
+            # 显示最终完成状态 - 更新主进度条
+            update_main_progress(processed_slices, len(all_data))
+
+            # 显示完成信息
+            stop_reason = "达到最大行数限制" if (max_rows and len(all_data) >= max_rows) else "所有时间切片处理完毕"
+            self.logger.info(f"{desc} [完成，共 {len(all_data)} 条数据，处理了 {processed_slices}/{total_slices} 个切片，{stop_reason}]")
 
             stop_reason = "达到最大行数限制" if (max_rows and len(all_data) >= max_rows) else "所有时间切片处理完毕"
             self.logger.info(f"按时间切片获取数据完成 - 共获取 {len(all_data)} 条数据，处理了 {processed_slices}/{total_slices} 个切片，停止原因: {stop_reason}")
@@ -370,7 +442,7 @@ class DataExporter:
                 self.progress_bars[position].clear()
             raise ExportError(f"按时间切片获取数据失败: {str(e)}")
 
-    def fetch_data(self, start_time: str, end_time: str, max_rows: Optional[int] = None, position: int = 0, desc: str = "Fetching data", show_progress: bool = True, page_callback: Optional[callable] = None) -> List[Dict]:
+    def fetch_data(self, start_time: str, end_time: str, max_rows: Optional[int] = None, position: int = 0, desc: str = "Fetching data", show_progress: bool = True, page_callback: Optional[callable] = None, page_callback_context: Optional[Dict] = None, resume_context: Optional[Dict] = None) -> List[Dict]:
         """
         调用远程 API 获取数据，处理分页和异步查询
 
@@ -396,12 +468,20 @@ class DataExporter:
             # 转换时间戳
             start_timestamp = self._iso_to_timestamp(start_time)
             end_timestamp = self._iso_to_timestamp(end_time)
-            cursor_time = end_timestamp  # 初始 cursor_time 为结束时间
-            
+
             all_data = []  # 存储所有分页的数据
-            cursor_token = None
-            page_count = 0
             reached_max_rows = False  # 标记是否达到最大行数
+
+            # 处理断点恢复：如果有恢复上下文，使用保存的游标信息
+            if resume_context and resume_context.get('next_cursor_time') and resume_context.get('next_cursor_token'):
+                cursor_time = resume_context['next_cursor_time']
+                cursor_token = resume_context['next_cursor_token']
+                page_count = resume_context.get('current_page', 1) - 1  # 从下一页开始，所以减1
+                self.logger.info(f"从断点恢复：使用保存的游标信息继续查询 - cursor_time: {cursor_time}, 从第 {page_count + 1} 页开始")
+            else:
+                cursor_time = end_timestamp  # 初始 cursor_time 为结束时间
+                cursor_token = None
+                page_count = 0  # 初始化页码计数器
             
             while True:
                 page_count += 1
@@ -493,10 +573,18 @@ class DataExporter:
                     self.progress_bars[position].set_description(status)
                     self.progress_bars[position].refresh()
 
-                # 调用页面回调函数，传入当前页的数据
+                # 调用页面回调函数，传入当前页的数据和上下文信息
                 if page_callback:
                     try:
-                        page_callback(all_data.copy(), page_count, None)  # total_pages 暂时设为 None，因为我们不知道总数
+                        context = page_callback_context or {}
+                        context.update({
+                            'next_cursor_time': next_cursor_time,
+                            'next_cursor_token': next_cursor_token,
+                            'page_count': page_count,
+                            'slice_start': start_time,
+                            'slice_end': end_time
+                        })
+                        page_callback(all_data.copy(), page_count, None, context)  # total_pages 暂时设为 None，因为我们不知道总数
                     except Exception as callback_error:
                         self.logger.warning(f"页面回调函数执行失败: {callback_error}")
 
@@ -691,6 +779,124 @@ class DataExporter:
         except Exception as e:
             self.logger.error(f"追加数据到 CSV 失败 - {output_path} - 错误: {str(e)}")
             raise ExportError(f"追加数据失败: {str(e)}")
+
+    def _save_checkpoint(self, output_path: Path, current_slice: int, total_slices: int,
+                        exported_count: int, slice_start: str, slice_end: str,
+                        next_cursor_time: Optional[str] = None, next_cursor_token: Optional[str] = None,
+                        current_page: int = 1) -> None:
+        """
+        保存导出断点信息
+
+        Args:
+            output_path: 输出文件路径
+            current_slice: 当前处理的切片编号
+            total_slices: 总切片数
+            exported_count: 已导出的数据条数
+            slice_start: 当前切片的开始时间
+            slice_end: 当前切片的结束时间
+            next_cursor_time: 下一页的游标时间
+            next_cursor_token: 下一页的游标令牌
+            current_page: 当前切片已处理的页数
+        """
+        try:
+            checkpoint_file = output_path.parent / f"{output_path.stem}_checkpoint.json"
+            checkpoint_data = {
+                "output_file": str(output_path),
+                "current_slice": current_slice,
+                "total_slices": total_slices,
+                "exported_count": exported_count,
+                "slice_start": slice_start,
+                "slice_end": slice_end,
+                "next_cursor_time": next_cursor_time,
+                "next_cursor_token": next_cursor_token,
+                "current_page": current_page,
+                "timestamp": time.time()
+            }
+
+            import json
+            with open(checkpoint_file, 'w', encoding='utf-8') as f:
+                json.dump(checkpoint_data, f, indent=2, ensure_ascii=False)
+
+            self.logger.debug(f"断点信息已保存到 {checkpoint_file}")
+        except Exception as e:
+            self.logger.warning(f"保存断点信息失败: {e}")
+
+    def load_checkpoint(self, output_path: Path) -> Optional[Dict]:
+        """
+        加载导出断点信息
+
+        Args:
+            output_path: 输出文件路径
+
+        Returns:
+            断点信息字典，如果不存在则返回None
+        """
+        try:
+            checkpoint_file = output_path.parent / f"{output_path.stem}_checkpoint.json"
+            if not checkpoint_file.exists():
+                return None
+
+            import json
+            with open(checkpoint_file, 'r', encoding='utf-8') as f:
+                checkpoint_data = json.load(f)
+
+            self.logger.info(f"找到断点信息文件: {checkpoint_file}")
+            return checkpoint_data
+        except Exception as e:
+            self.logger.warning(f"加载断点信息失败: {e}")
+            return None
+
+    def resume_from_checkpoint(self, output_path: Path, start_time: str, end_time: str,
+                             time_slice_minutes: int, max_rows: Optional[int] = None) -> Optional[List[Dict]]:
+        """
+        从断点恢复导出
+
+        Args:
+            output_path: 输出文件路径
+            start_time: 原始开始时间
+            end_time: 原始结束时间
+            time_slice_minutes: 时间切片大小
+            max_rows: 最大行数限制
+
+        Returns:
+            如果成功恢复，返回已导出的数据；否则返回None
+        """
+        checkpoint = self.load_checkpoint(output_path)
+        if not checkpoint:
+            return None
+
+        try:
+            current_slice = checkpoint["current_slice"]
+            exported_count = checkpoint["exported_count"]
+            next_cursor_time = checkpoint.get("next_cursor_time")
+            next_cursor_token = checkpoint.get("next_cursor_token")
+            current_page = checkpoint.get("current_page", 1)
+
+            self.logger.info(f"从断点恢复导出：已处理 {current_slice-1}/{checkpoint['total_slices']} 个切片，当前切片已处理 {current_page} 页，已导出 {exported_count} 条数据")
+
+            # 创建恢复上下文，包含游标信息
+            resume_context = {
+                'next_cursor_time': next_cursor_time,
+                'next_cursor_token': next_cursor_token,
+                'current_page': current_page,
+                'exported_count': exported_count
+            }
+
+            # 重新开始导出，但跳过已处理的切片
+            return self.fetch_data_with_time_slices(
+                start_time=start_time,
+                end_time=end_time,
+                time_slice_minutes=time_slice_minutes,
+                max_rows=max_rows,
+                position=0,
+                desc="Resuming data fetch",
+                output_path=output_path,
+                resume_from_slice=current_slice,
+                resume_context=resume_context
+            )
+        except Exception as e:
+            self.logger.error(f"从断点恢复导出失败: {e}")
+            return None
 
     def __del__(self):
         """清理所有进度条"""

@@ -34,6 +34,13 @@ def export(api_domain: str, output: str, api_key: Optional[str], dql: str, start
     logging.info(f"开始时间: {start_time} - 结束时间: {end_time} - 时间切片: {time_slice}分钟 - 最大行数: {max_rows}")
     
     try:
+        # 检查是否有断点信息，尝试恢复
+        resume_slice = 1
+        checkpoint = exporter.load_checkpoint(output_path)
+        if checkpoint:
+            logging.info(f"发现断点信息，尝试从第 {checkpoint['current_slice']} 个切片恢复导出")
+            resume_slice = checkpoint['current_slice']
+
         # 获取数据（使用时间切片），并在每次切片后自动导出
         data = exporter.fetch_data_with_time_slices(
             start_time=start_time,
@@ -42,12 +49,13 @@ def export(api_domain: str, output: str, api_key: Optional[str], dql: str, start
             max_rows=max_rows,
             position=0,
             desc="Fetching data",
-            output_path=output_path  # 传递输出路径，在每次切片后自动导出
+            output_path=output_path,  # 传递输出路径，在每次切片后自动导出
+            resume_from_slice=resume_slice  # 从指定切片恢复
         )
 
         # 显示最终导出完成信息
         logging.info(f"所有数据导出完成 - 共导出 {len(data)} 条数据到 {output_path}")
-        
+
         count = len(data)
         success = True
         
