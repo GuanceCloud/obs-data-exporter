@@ -12,7 +12,7 @@ from .exporter import DataExporter
 @click.option('--dql', type=str, required=True, help='DQL 查询语句')
 @click.option('--start-time', type=str, required=True, help='开始时间（ISO 格式，如：2024-01-01T00:00:00+08:00）')
 @click.option('--end-time', type=str, required=True, help='结束时间（ISO 格式，如：2024-01-01T23:59:59+08:00）')
-@click.option('--time-slice', type=int, default=1, help='时间切片大小（分钟），用于将时间范围分割成多个段进行导出，默认 5 分钟')
+@click.option('--time-slice', type=int, default=1, help='时间切片大小（分钟），用于将时间范围分割成多个段进行导出，默认 1 分钟')
 @click.option('--max-rows', type=int, default=10000, help='最大导出行数（可选，达到此数量或数据查询完毕时停止，默认导出 10000 行）')
 def export(api_domain: str, output: str, api_key: Optional[str], dql: str, start_time: str, end_time: str, time_slice: int, max_rows: Optional[int]):
     """从远程 API 获取数据并导出到 CSV 文件"""

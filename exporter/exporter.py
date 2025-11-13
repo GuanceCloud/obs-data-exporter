@@ -257,12 +257,17 @@ class DataExporter:
 
             all_data = []
             processed_slices = 0
+            exported_count = 0  # 已导出到文件的数据量
 
             # 定义页面回调函数，用于在每一页数据获取完成后导出
             def page_export_callback(page_data, page_num, total_pages):
-                nonlocal all_data
-                # 更新累积数据（page_data 已经是完整的累积数据）
-                all_data = page_data
+                nonlocal all_data, exported_count
+
+                # 计算本次新增的数据
+                previous_count = len(all_data)
+                all_data = page_data  # 更新累积数据
+                new_data_count = len(all_data) - previous_count
+                new_data = all_data[previous_count:] if new_data_count > 0 else []
 
                 # 更新主进度条，显示实时的累计数据量
                 if position in self.progress_bars and self.current_tasks.get(position) == desc:
@@ -275,18 +280,22 @@ class DataExporter:
                     self.progress_bars[position].set_description(current_status)
                     self.progress_bars[position].refresh()
 
-                # 如果提供了输出路径，则导出当前累积数据
-                if output_path:
+                # 如果提供了输出路径，且有新增数据，且未达到最大行数限制，则追加导出到文件
+                if output_path and new_data and (not max_rows or len(page_data) <= max_rows):
                     try:
-                        self.logger.info(f"页面 {page_num} 数据获取完成，正在导出当前累积数据到文件（共 {len(page_data)} 条数据）")
-                        # 对于页面导出，使用不显示进度的导出方式，避免终端输出过多完成状态
-                        self._export_to_csv_silent(
-                            data=page_data,
-                            output_path=output_path
+                        self.logger.info(f"页面 {page_num} 数据获取完成，正在追加导出新增数据到文件（新增 {len(new_data)} 条，累计 {len(page_data)} 条数据）")
+                        # 对于页面导出，使用追加模式，避免覆盖之前的数据
+                        self._append_to_csv(
+                            data=new_data,
+                            output_path=output_path,
+                            is_first_batch=(exported_count == 0)  # 第一次写入时包含表头
                         )
-                        self.logger.info(f"页面 {page_num} 数据已导出到 {output_path}（当前共 {len(page_data)} 条数据）")
+                        exported_count += len(new_data)
+                        self.logger.info(f"页面 {page_num} 新增数据已追加到 {output_path}（本次追加 {len(new_data)} 条，文件累计 {exported_count} 条）")
                     except Exception as export_error:
-                        self.logger.error(f"导出页面 {page_num} 数据失败: {export_error}")
+                        self.logger.error(f"追加页面 {page_num} 数据失败: {export_error}")
+                elif output_path and new_data and max_rows and len(page_data) > max_rows:
+                    self.logger.info(f"页面 {page_num} 数据已达到最大行数限制 {max_rows}，跳过追加导出（新增 {len(new_data)} 条，累计 {len(page_data)} 条数据）")
 
             for i, (slice_start, slice_end) in enumerate(time_slices):
                 # 计算当前切片允许的最大行数
@@ -329,6 +338,20 @@ class DataExporter:
                     self.logger.info(f"已达到最大行数限制: {max_rows}，停止继续导出")
                     all_data = all_data[:max_rows]
                     break
+
+            # 如果达到了最大行数限制，需要截断数据并重新导出完整文件
+            if max_rows and len(all_data) >= max_rows:
+                self.logger.info(f"达到最大行数限制 {max_rows}，截断数据并重新导出完整文件")
+                all_data = all_data[:max_rows]
+
+                # 如果提供了输出路径，需要重新导出完整文件
+                if output_path:
+                    try:
+                        self.logger.info(f"正在重新导出截断后的完整数据到文件（共 {len(all_data)} 条数据）")
+                        self._export_to_csv_silent(data=all_data, output_path=output_path)
+                        self.logger.info(f"截断后的数据已重新导出到 {output_path}（共 {len(all_data)} 条数据）")
+                    except Exception as export_error:
+                        self.logger.error(f"重新导出截断数据失败: {export_error}")
 
             # 显示最终完成状态
             if position in self.progress_bars and self.current_tasks.get(position) == desc:
@@ -621,6 +644,53 @@ class DataExporter:
         except Exception as e:
             self.logger.error(f"导出数据失败 - {output_path} - 错误: {str(e)}")
             raise ExportError(f"数据导出失败: {str(e)}")
+
+    def _append_to_csv(self, data: List[Dict], output_path: Path, is_first_batch: bool = False) -> bool:
+        """
+        追加数据到 CSV 文件
+
+        Args:
+            data: 要追加的数据列表（字典列表）
+            output_path: 输出 CSV 文件路径
+            is_first_batch: 是否是第一次写入（需要写入表头）
+
+        Returns:
+            是否导出成功
+        """
+        try:
+            if not data:
+                return True
+
+            # 确定 CSV 的列名（从第一条数据中提取所有键）
+            fieldnames = list(data[0].keys())
+
+            # 确保所有数据都有相同的字段（填充缺失字段）
+            for row in data:
+                for field in fieldnames:
+                    if field not in row:
+                        row[field] = ""
+
+            # 创建输出目录
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+
+            # 打开文件：第一次写入用 'w' 模式（包含表头），后续用 'a' 模式（追加数据）
+            mode = 'w' if is_first_batch else 'a'
+            with open(output_path, mode, encoding='utf-8', newline='') as f:
+                writer = csv.DictWriter(f, fieldnames=fieldnames)
+
+                # 只有第一次写入时才写表头
+                if is_first_batch:
+                    writer.writeheader()
+
+                # 写入数据
+                for row in data:
+                    writer.writerow(row)
+
+            return True
+
+        except Exception as e:
+            self.logger.error(f"追加数据到 CSV 失败 - {output_path} - 错误: {str(e)}")
+            raise ExportError(f"追加数据失败: {str(e)}")
 
     def __del__(self):
         """清理所有进度条"""
