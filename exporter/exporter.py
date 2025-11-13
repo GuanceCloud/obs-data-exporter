@@ -425,12 +425,11 @@ class DataExporter:
                     except Exception as export_error:
                         self.logger.error(f"重新导出截断数据失败: {export_error}")
 
-            # 显示最终完成状态 - 更新主进度条
-            update_main_progress(processed_slices, len(all_data))
-
-            # 显示完成信息
-            stop_reason = "达到最大行数限制" if (max_rows and len(all_data) >= max_rows) else "所有时间切片处理完毕"
-            self.logger.info(f"{desc} [完成，共 {len(all_data)} 条数据，处理了 {processed_slices}/{total_slices} 个切片，{stop_reason}]")
+            # 清理所有进度条，避免与 CLI 的输出冲突
+            for pbar in self.progress_bars.values():
+                pbar.clear()
+                pbar.close()
+            self.progress_bars.clear()
 
             stop_reason = "达到最大行数限制" if (max_rows and len(all_data) >= max_rows) else "所有时间切片处理完毕"
             self.logger.info(f"按时间切片获取数据完成 - 共获取 {len(all_data)} 条数据，处理了 {processed_slices}/{total_slices} 个切片，停止原因: {stop_reason}")
@@ -438,8 +437,11 @@ class DataExporter:
 
         except Exception as e:
             self.logger.error(f"按时间切片获取数据失败 - {desc} - 错误: {str(e)}")
-            if position in self.progress_bars:
-                self.progress_bars[position].clear()
+            # 清理所有进度条
+            for pbar in self.progress_bars.values():
+                pbar.clear()
+                pbar.close()
+            self.progress_bars.clear()
             raise ExportError(f"按时间切片获取数据失败: {str(e)}")
 
     def fetch_data(self, start_time: str, end_time: str, max_rows: Optional[int] = None, position: int = 0, desc: str = "Fetching data", show_progress: bool = True, page_callback: Optional[callable] = None, page_callback_context: Optional[Dict] = None, resume_context: Optional[Dict] = None) -> List[Dict]:
@@ -520,7 +522,11 @@ class DataExporter:
                     self.logger.warning("API 返回数据为空")
                     break
                 
-                # self.logger.info(f"查询结果: {result}")
+                _next_cursor_time = result["content"]["data"][0].get("next_cursor_time", "")
+                _trace_id = result.get("trace_id", "")
+                self.logger.info(f"查询结果: {_next_cursor_time}, trace_id: {_trace_id}")
+                if _next_cursor_time == -1:
+                    self.logger.info(f"最后一次查询结果: {result}")
 
                 query_data = result["content"]["data"][0]
                 query_status = query_data.get("query_status", "")
