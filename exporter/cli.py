@@ -29,6 +29,8 @@ def export(api_domain: str, output: str, api_key: Optional[str], dql: str, start
     
     max_rows_info = f" - 最大行数: {max_rows}" if max_rows else ""
     logging.info(f"开始导出任务 - API 域名: {api_domain} - 输出文件: {output_path} - 开始时间: {start_time} - 结束时间: {end_time}{max_rows_info}")
+    logging.info(f"DQL: {dql}")
+    logging.info(f"开始时间: {start_time} - 结束时间: {end_time} - 最大行数: {max_rows}")
     
     try:
         # 获取数据

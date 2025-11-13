@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+from re import A
 from typing import Optional, Dict, List
 import requests
 import csv
@@ -20,7 +21,7 @@ class DataExporter:
         初始化数据导出器
         
         Args:
-            api_domain: API 域名（如：https://cn3-open-api.guance.com）
+            api_domain: API 域名（如：https://cn3-openapi.guance.com）
             api_key: API 密钥（可选，也可以从环境变量获取）
             dql: DQL 查询语句
         """
@@ -116,6 +117,8 @@ class DataExporter:
         
         payload = {"queries": queries}
         
+        self.logger.info(f"payload: {payload}")
+
         response = requests.post(
             self.api_url,
             headers=self.headers,
@@ -165,6 +168,8 @@ class DataExporter:
                 "indexes": ["default"],
                 "tz": "Asia/Shanghai"
             }
+
+            self.logger.info(f"等待异步查询完成 - async_id: {async_id} - query_params: {query_params}")
             
             result = self._query_api(query_params, async_id=async_id)
             
@@ -242,6 +247,8 @@ class DataExporter:
                     "tz": "Asia/Shanghai"
                 }
                 
+                self.logger.info(f"开始获取第 {page_count} 页数据 - query_params: {query_params}")
+
                 # 如果有 cursor_token，添加到查询参数中
                 if cursor_token:
                     query_params["cursor_token"] = cursor_token
@@ -253,6 +260,8 @@ class DataExporter:
                     self.logger.warning("API 返回数据为空")
                     break
                 
+                self.logger.info(f"查询结果: {result}")
+
                 query_data = result["content"]["data"][0]
                 query_status = query_data.get("query_status", "")
                 
