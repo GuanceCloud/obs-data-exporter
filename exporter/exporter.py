@@ -241,23 +241,22 @@ class DataExporter:
         pbar = self._create_progress_bar(position, desc)
 
         try:
-            self.logger.info(f"开始按时间切片获取数据 - {desc} - 开始时间: {start_time} - 结束时间: {end_time} - 切片大小: {time_slice_minutes}分钟")
-
             # 生成时间切片
             time_slices = self._generate_time_slices(start_time, end_time, time_slice_minutes)
-            self.logger.info(f"生成了 {len(time_slices)} 个时间切片")
+            total_slices = len(time_slices)
+
+            self.logger.info(f"开始按时间切片获取数据 - {desc} - 开始时间: {start_time} - 结束时间: {end_time} - 切片大小: {time_slice_minutes}分钟 - 共 {total_slices} 个切片")
+
+            # 初始化进度条 - 显示总体信息
+            if position in self.progress_bars and self.current_tasks.get(position) == desc:
+                init_status = f"{desc} [准备处理，共 {total_slices} 个时间切片]"
+                self.progress_bars[position].set_description(init_status)
+                self.progress_bars[position].refresh()
 
             all_data = []
-            total_slices = len(time_slices)
             processed_slices = 0
 
             for i, (slice_start, slice_end) in enumerate(time_slices):
-                slice_desc = f"{desc} [切片 {i+1}/{total_slices}: {slice_start} 至 {slice_end}]"
-                self.logger.info(f"开始处理时间切片 {i+1}/{total_slices}: {slice_start} 至 {slice_end}")
-
-                # 为每个切片创建独立的进度条位置
-                slice_position = position + i + 1
-
                 # 计算当前切片允许的最大行数
                 slice_max_rows = None
                 if max_rows:
@@ -266,37 +265,43 @@ class DataExporter:
                         self.logger.info(f"已达到最大行数限制: {max_rows}，跳过剩余切片")
                         break
                     slice_max_rows = remaining_rows
-                    self.logger.info(f"当前切片最多允许获取 {slice_max_rows} 条数据（剩余需要 {remaining_rows} 条）")
+
+                # 更新进度条 - 显示当前切片处理状态
+                if position in self.progress_bars and self.current_tasks.get(position) == desc:
+                    current_status = f"{desc} [切片 {i+1}/{total_slices}：{slice_start[:19]} → {slice_end[:19]}]"
+                    if max_rows:
+                        current_status += f" [累计 {len(all_data)}/{max_rows} 条数据]"
+                    else:
+                        current_status += f" [累计 {len(all_data)} 条数据]"
+                    self.progress_bars[position].set_description(current_status)
+                    self.progress_bars[position].refresh()
+
+                self.logger.info(f"正在处理切片 {i+1}/{total_slices}：{slice_start} 至 {slice_end}")
 
                 # 获取当前切片的数据
                 slice_data = self.fetch_data(
                     start_time=slice_start,
                     end_time=slice_end,
-                    max_rows=slice_max_rows,  # 设置单个切片的最大行数限制
-                    position=slice_position,
-                    desc=slice_desc
+                    max_rows=slice_max_rows,
+                    position=position + 1000 + i,  # 远离主进度条的位置
+                    desc=f"切片 {i+1}/{total_slices}",
+                    show_progress=False  # 不显示切片级别的详细进度
                 )
 
                 # 添加到总数据中
                 all_data.extend(slice_data)
                 processed_slices += 1
 
-                # 更新主进度条
-                if position in self.progress_bars and self.current_tasks.get(position) == desc:
-                    max_info = f"/{max_rows}" if max_rows else ""
-                    status = f"{desc} [已处理 {processed_slices}/{total_slices} 个切片，已获取 {len(all_data)}{max_info} 条数据]"
-                    self.progress_bars[position].set_description(status)
-                    self.progress_bars[position].refresh()
-
                 # 检查是否达到最大行数限制
                 if max_rows and len(all_data) >= max_rows:
                     self.logger.info(f"已达到最大行数限制: {max_rows}，停止继续导出")
-                    all_data = all_data[:max_rows]  # 截取到最大行数
+                    all_data = all_data[:max_rows]
                     break
 
+            # 显示最终完成状态
             if position in self.progress_bars and self.current_tasks.get(position) == desc:
                 stop_reason = "达到最大行数限制" if (max_rows and len(all_data) >= max_rows) else "所有时间切片处理完毕"
-                final_status = f"{desc} [完成，共 {len(all_data)} 条数据，{processed_slices}/{total_slices} 个切片，{stop_reason}]"
+                final_status = f"{desc} [完成，共 {len(all_data)} 条数据，处理了 {processed_slices}/{total_slices} 个切片，{stop_reason}]"
                 self.progress_bars[position].set_description(final_status)
                 self.progress_bars[position].refresh()
 
@@ -310,22 +315,24 @@ class DataExporter:
                 self.progress_bars[position].clear()
             raise ExportError(f"按时间切片获取数据失败: {str(e)}")
 
-    def fetch_data(self, start_time: str, end_time: str, max_rows: Optional[int] = None, position: int = 0, desc: str = "Fetching data") -> List[Dict]:
+    def fetch_data(self, start_time: str, end_time: str, max_rows: Optional[int] = None, position: int = 0, desc: str = "Fetching data", show_progress: bool = True) -> List[Dict]:
         """
         调用远程 API 获取数据，处理分页和异步查询
-        
+
         Args:
             start_time: 开始时间（ISO 格式）
             end_time: 结束时间（ISO 格式）
             max_rows: 最大导出行数（可选，达到此数量时停止）
             position: 进度条位置
             desc: 进度条描述
-            
+            show_progress: 是否显示详细进度信息
+
         Returns:
             返回的数据列表（所有 series 的合并数据）
         """
-        pbar = self._create_progress_bar(position, desc)
-        
+        if show_progress:
+            pbar = self._create_progress_bar(position, desc)
+
         try:
             max_rows_info = f" - 最大行数: {max_rows}" if max_rows else ""
             self.logger.info(f"开始获取数据 - {desc} - 开始时间: {start_time} - 结束时间: {end_time}{max_rows_info}")
