@@ -196,7 +196,7 @@ class DataExporter:
 
     def _generate_time_slices(self, start_time: str, end_time: str, slice_minutes: int) -> List[tuple[str, str]]:
         """
-        生成时间切片列表
+        生成时间切片列表，从 end_time 往 start_time 方向切片
 
         Args:
             start_time: 开始时间（ISO 格式）
@@ -210,15 +210,15 @@ class DataExporter:
         end_dt = dateutil.parser.parse(end_time)
 
         time_slices = []
-        current_time = start_dt
+        current_time = end_dt
 
-        while current_time < end_dt:
-            slice_end = min(current_time + timedelta(minutes=slice_minutes), end_dt)
+        while current_time > start_dt:
+            slice_start = max(current_time - timedelta(minutes=slice_minutes), start_dt)
             time_slices.append((
-                current_time.isoformat(),
-                slice_end.isoformat()
+                slice_start.isoformat(),
+                current_time.isoformat()
             ))
-            current_time = slice_end
+            current_time = slice_start
 
         return time_slices
 
@@ -377,7 +377,7 @@ class DataExporter:
                     self.logger.warning("API 返回数据为空")
                     break
                 
-                self.logger.info(f"查询结果: {result}")
+                # self.logger.info(f"查询结果: {result}")
 
                 query_data = result["content"]["data"][0]
                 query_status = query_data.get("query_status", "")
@@ -438,8 +438,8 @@ class DataExporter:
                 # 检查是否有下一页
                 next_cursor_time = query_data.get("next_cursor_time")
                 next_cursor_token = query_data.get("next_cursor_token")
-                
-                if next_cursor_time and next_cursor_token:
+
+                if next_cursor_time is not None and next_cursor_time != -1:
                     cursor_time = next_cursor_time
                     cursor_token = next_cursor_token
                     self.logger.info(f"准备获取下一页 - next_cursor_time: {next_cursor_time}, next_cursor_token: {next_cursor_token}")
