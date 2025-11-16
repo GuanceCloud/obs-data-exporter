@@ -674,6 +674,10 @@ class DataExporter:
                     self.progress_bars[position].set_description(status)
                     self.progress_bars[position].refresh()
                 
+                # 检查是否有下一页（在调用回调函数之前获取，以便传递给回调）
+                next_cursor_time = query_data.get("next_cursor_time")
+                next_cursor_token = query_data.get("next_cursor_token")
+                
                 # 调用页面回调函数，传入当前页的数据和上下文信息
                 if page_callback:
                     try:
@@ -698,10 +702,6 @@ class DataExporter:
                 if reached_max_rows:
                     self.logger.info(f"已达到最大行数限制: {max_rows}，停止查询")
                     break
-                
-                # 检查是否有下一页
-                next_cursor_time = query_data.get("next_cursor_time")
-                next_cursor_token = query_data.get("next_cursor_token")
                 
                 if next_cursor_time is not None and next_cursor_time != -1:
                     cursor_time = next_cursor_time
