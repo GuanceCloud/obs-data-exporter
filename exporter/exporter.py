@@ -471,14 +471,20 @@ class DataExporter:
                 if len(all_data) > self.max_rows:
                     all_data = all_data[:self.max_rows]
                 
-                # 如果提供了输出路径，需要重新导出完整文件（确保文件中的数据量正确）
-                if self.output_path:
+                # 如果提供了输出路径，检查是否需要重新导出
+                # 只有在 all_data 的长度大于 exported_count 且需要截断时，才重新导出
+                # 如果 exported_count 已经达到限制，说明文件中的数据已经是正确的，不需要重新导出
+                if self.output_path and len(all_data) > exported_count:
+                    # all_data 包含的数据比已导出的多，需要重新导出截断后的数据
                     try:
-                        self.logger.info(f"达到最大行数限制 {self.max_rows}，重新导出完整文件（共 {len(all_data)} 条数据）")
+                        self.logger.info(f"达到最大行数限制 {self.max_rows}，重新导出完整文件（共 {len(all_data)} 条数据，已导出 {exported_count} 条）")
                         self._export_to_csv_silent(data=all_data, output_path=self.output_path)
                         self.logger.info(f"截断后的数据已重新导出到 {self.output_path}（共 {len(all_data)} 条数据）")
                     except Exception as export_error:
                         self.logger.error(f"重新导出截断数据失败: {export_error}")
+                elif self.output_path and exported_count >= self.max_rows:
+                    # 已导出的数据量已经达到限制，文件中的数据是正确的，不需要重新导出
+                    self.logger.info(f"已达到最大行数限制 {self.max_rows}，文件中的数据量正确（已导出 {exported_count} 条），无需重新导出")
             else:
                 # 未达到限制，使用实际导出的数据量
                 final_count = exported_count if self.output_path else len(all_data)
@@ -498,10 +504,24 @@ class DataExporter:
             stop_reason = "达到最大行数限制" if (self.max_rows and final_count >= self.max_rows) else "所有时间切片处理完毕"
             self.logger.info(f"按时间切片获取数据完成 - 共获取 {final_count} 条数据，处理了 {processed_slices}/{total_slices} 个切片，停止原因: {stop_reason}")
             
-            # 确保返回的数据量正确（使用 final_count 而不是 all_data 的长度）
-            if len(all_data) != final_count:
+            # 确保返回的数据量正确
+            # 如果 exported_count >= self.max_rows 且 len(all_data) < exported_count，
+            # 说明文件中的数据是正确的，all_data 不完整（可能因为达到限制后停止查询）
+            # 在这种情况下，我们应该从文件中读取数据并返回，确保返回的数据量是正确的
+            if len(all_data) > final_count:
+                # all_data 超过限制，截断到限制
                 self.logger.warning(f"数据量不一致：all_data 长度 {len(all_data)}，最终计数 {final_count}，将截断 all_data")
-                all_data = all_data[:final_count] if len(all_data) > final_count else all_data
+                all_data = all_data[:final_count]
+            elif len(all_data) < final_count and self.output_path and exported_count >= final_count:
+                # all_data 不完整，但文件中的数据是正确的（已导出足够的数据）
+                # 在这种情况下，我们应该从文件中读取数据并返回，确保返回的数据量是正确的
+                self.logger.info(f"all_data 不完整（{len(all_data)} 条），但文件中的数据量正确（已导出 {exported_count} 条），从文件读取数据以确保返回的数据量正确")
+                try:
+                    all_data = self._read_from_csv(self.output_path, max_rows=final_count)
+                    self.logger.info(f"从文件读取数据完成，共 {len(all_data)} 条数据")
+                except Exception as read_error:
+                    self.logger.warning(f"从文件读取数据失败: {read_error}，将返回不完整的 all_data")
+                    # 如果读取失败，返回不完整的 all_data，但 final_count 是正确的，CLI 会使用 final_count 显示正确的数据量
             
             return all_data
 
@@ -818,6 +838,37 @@ class DataExporter:
         except Exception as e:
             self.logger.error(f"导出数据失败 - {output_path} - 错误: {str(e)}")
             raise ExportError(f"数据导出失败: {str(e)}")
+
+    def _read_from_csv(self, output_path: Path, max_rows: Optional[int] = None) -> List[Dict]:
+        """
+        从 CSV 文件读取数据
+
+        Args:
+            output_path: CSV 文件路径
+            max_rows: 最大读取行数（如果指定，只读取前 max_rows 行）
+
+        Returns:
+            读取的数据列表（字典列表）
+        """
+        try:
+            if not output_path.exists():
+                self.logger.warning(f"文件不存在: {output_path}")
+                return []
+
+            data = []
+            with open(output_path, 'r', encoding='utf-8') as f:
+                reader = csv.DictReader(f)
+                for i, row in enumerate(reader):
+                    if max_rows and i >= max_rows:
+                        break
+                    data.append(row)
+
+            self.logger.info(f"从文件读取数据完成 - {output_path} - 共读取 {len(data)} 条数据")
+            return data
+
+        except Exception as e:
+            self.logger.error(f"从文件读取数据失败 - {output_path} - 错误: {str(e)}")
+            raise ExportError(f"从文件读取数据失败: {str(e)}")
 
     def _append_to_csv(self, data: List[Dict], output_path: Path, is_first_batch: bool = False) -> bool:
         """
