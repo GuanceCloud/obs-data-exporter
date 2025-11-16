@@ -35,6 +35,8 @@ python -m exporter.cli \
   --dql 'L("default")::re(`.*`):(host, service, source) { }' \
   --start-time "2025/11/12T23:46:30+08:00" \
   --end-time "2025/11/13T00:46:30+08:00" \
+  --max-rows 10000 \
+  --time-slice 1 \
   --output "/path/to/output.csv"
 ```
 
