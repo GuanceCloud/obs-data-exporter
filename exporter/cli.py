@@ -23,10 +23,18 @@ def export(api_domain: str, output: str, api_key: Optional[str], dql: str, start
         format='%(asctime)s - %(levelname)s - %(message)s'
     )
     
+    # 初始化导出器，传入所有配置参数
     output_path = Path(output)
-    
-    # 初始化导出器
-    exporter = DataExporter(api_domain=api_domain, api_key=api_key, dql=dql)
+    exporter = DataExporter(
+        api_domain=api_domain,
+        api_key=api_key,
+        dql=dql,
+        start_time=start_time,
+        end_time=end_time,
+        max_rows=max_rows,
+        time_slice_minutes=time_slice,
+        output_path=output_path
+    )
     
     max_rows_info = f" - 最大行数: {max_rows}" if max_rows else ""
     logging.info(f"开始导出任务 - API 域名: {api_domain} - 输出文件: {output_path} - 开始时间: {start_time} - 结束时间: {end_time} - 时间切片: {time_slice}分钟{max_rows_info}")
@@ -41,15 +49,10 @@ def export(api_domain: str, output: str, api_key: Optional[str], dql: str, start
             logging.info(f"发现断点信息，尝试从第 {checkpoint['current_slice']} 个切片恢复导出")
             resume_slice = checkpoint['current_slice']
 
-        # 获取数据（使用时间切片），并在每次切片后自动导出
+        # 获取数据（使用时间切片），配置参数已在初始化时设置
         data = exporter.fetch_data_with_time_slices(
-            start_time=start_time,
-            end_time=end_time,
-            time_slice_minutes=time_slice,
-            max_rows=max_rows,
             position=0,
             desc="Fetching data",
-            output_path=output_path,  # 传递输出路径，在每次切片后自动导出
             resume_from_slice=resume_slice  # 从指定切片恢复
         )
 
