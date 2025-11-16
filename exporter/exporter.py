@@ -291,7 +291,8 @@ class DataExporter:
             # 显示初始状态
             update_main_progress(0, 0)
 
-            all_data = []
+            # 优化：不再在内存中累积所有数据，数据通过回调函数直接导出到文件
+            all_data = []  # 不再使用，保留用于向后兼容
             processed_slices = 0
             exported_count = 0  # 已导出到文件的数据量
             # 使用字典来存储停止标志，可以在回调函数和 fetch_data 之间共享
@@ -304,17 +305,15 @@ class DataExporter:
 
             # 定义页面回调函数，用于在每一页数据获取完成后导出
             def page_export_callback(page_data, page_num, total_pages, context=None):
-                nonlocal all_data, exported_count, current_slice_info, current_slice_exported
+                nonlocal exported_count, current_slice_info, current_slice_exported
 
                 # 如果已经达到限制，直接返回，不再处理
                 if stop_flags['should_stop']:
                     return
 
-                # 计算本次新增的数据
-                previous_count = len(all_data)
-                all_data = page_data  # 更新累积数据
-                new_data_count = len(all_data) - previous_count
-                new_data = all_data[previous_count:] if new_data_count > 0 else []
+                # 优化：page_data 已经是当前页的数据，不需要计算新增数据
+                # 直接使用当前页数据作为新增数据
+                new_data = page_data if page_data else []
 
                 # 更新主进度条 - 显示已完成的切片数和累计数据量（不超过最大限制）
                 display_count = min(exported_count, self.max_rows) if self.max_rows else exported_count
@@ -382,9 +381,8 @@ class DataExporter:
 
                     except Exception as export_error:
                         self.logger.error(f"追加页面 {page_num} 数据失败: {export_error}")
-                elif self.output_path and new_data and self.max_rows and len(page_data) > self.max_rows:
-                    stop_flags['should_stop'] = True
-                    self.logger.info(f"页面 {page_num} 数据已达到最大行数限制 {self.max_rows}，停止导出和查询（新增 {len(new_data)} 条，累计 {len(page_data)} 条数据）")
+                # 注意：page_data 是当前页数据，不应该和 max_rows 比较
+                # max_rows 检查已经在上面通过 exported_count 进行了
 
             for i, (slice_start, slice_end) in enumerate(time_slices):
                 # 检查是否已达到全局最大行数限制，如果是则停止处理
@@ -432,6 +430,7 @@ class DataExporter:
                     slice_resume_context = resume_context
 
                 # 获取当前切片的数据，使用页面回调函数
+                # 优化：数据通过回调函数直接导出到文件，不返回数据
                 slice_data = self.fetch_data(
                     start_time=slice_start,
                     end_time=slice_end,
@@ -451,46 +450,30 @@ class DataExporter:
                     self.progress_bars[slice_position].set_description(final_slice_status)
                     self.progress_bars[slice_position].refresh()
 
-                # 注意：由于使用了回调函数，all_data 已经在回调中更新了
+                # 优化：数据已经通过回调函数导出到文件，不需要累积到 all_data
+                # 如果没有回调函数，为了向后兼容，累积数据
+                if not self.output_path and slice_data:
+                    all_data.extend(slice_data)
+
                 processed_slices += 1
 
                 # 检查是否达到最大行数限制（基于已导出的数据量）
                 if self.max_rows and exported_count >= self.max_rows:
                     self.logger.info(f"已达到最大行数限制: {self.max_rows}，停止继续导出（已导出 {exported_count} 条数据）")
-                    # 截断 all_data 到最大限制
-                    all_data = all_data[:self.max_rows] if len(all_data) > self.max_rows else all_data
                     # 更新 exported_count 以匹配实际数据量
                     exported_count = min(exported_count, self.max_rows)
                     break
+                
+                # 重置当前切片的导出计数，为下一个切片做准备
+                current_slice_exported = 0
 
             # 确定最终的数据量（使用已导出的数据量，因为这是实际写入文件的数据）
             if self.max_rows and exported_count >= self.max_rows:
                 # 达到限制，最终数据量就是限制值
                 final_count = self.max_rows
-                # 如果 all_data 超过限制，截断到限制
-                if len(all_data) > self.max_rows:
-                    all_data = all_data[:self.max_rows]
-                
-                # 如果提供了输出路径，检查是否需要重新导出
-                # 只有在 all_data 的长度大于 exported_count 且需要截断时，才重新导出
-                # 如果 exported_count 已经达到限制，说明文件中的数据已经是正确的，不需要重新导出
-                if self.output_path and len(all_data) > exported_count:
-                    # all_data 包含的数据比已导出的多，需要重新导出截断后的数据
-                    try:
-                        self.logger.info(f"达到最大行数限制 {self.max_rows}，重新导出完整文件（共 {len(all_data)} 条数据，已导出 {exported_count} 条）")
-                        self._export_to_csv_silent(data=all_data, output_path=self.output_path)
-                        self.logger.info(f"截断后的数据已重新导出到 {self.output_path}（共 {len(all_data)} 条数据）")
-                    except Exception as export_error:
-                        self.logger.error(f"重新导出截断数据失败: {export_error}")
-                elif self.output_path and exported_count >= self.max_rows:
-                    # 已导出的数据量已经达到限制，文件中的数据是正确的，不需要重新导出
-                    self.logger.info(f"已达到最大行数限制 {self.max_rows}，文件中的数据量正确（已导出 {exported_count} 条），无需重新导出")
             else:
                 # 未达到限制，使用实际导出的数据量
                 final_count = exported_count if self.output_path else len(all_data)
-                # 如果 all_data 超过已导出数量，截断到已导出数量（确保返回的数据量正确）
-                if self.output_path and len(all_data) > exported_count:
-                    all_data = all_data[:exported_count]
 
             # 最终更新主进度条，显示正确的最终数据量
             update_main_progress(processed_slices, final_count)
@@ -504,24 +487,21 @@ class DataExporter:
             stop_reason = "达到最大行数限制" if (self.max_rows and final_count >= self.max_rows) else "所有时间切片处理完毕"
             self.logger.info(f"按时间切片获取数据完成 - 共获取 {final_count} 条数据，处理了 {processed_slices}/{total_slices} 个切片，停止原因: {stop_reason}")
             
-            # 确保返回的数据量正确
-            # 如果 exported_count >= self.max_rows 且 len(all_data) < exported_count，
-            # 说明文件中的数据是正确的，all_data 不完整（可能因为达到限制后停止查询）
-            # 在这种情况下，我们应该从文件中读取数据并返回，确保返回的数据量是正确的
-            if len(all_data) > final_count:
-                # all_data 超过限制，截断到限制
-                self.logger.warning(f"数据量不一致：all_data 长度 {len(all_data)}，最终计数 {final_count}，将截断 all_data")
-                all_data = all_data[:final_count]
-            elif len(all_data) < final_count and self.output_path and exported_count >= final_count:
-                # all_data 不完整，但文件中的数据是正确的（已导出足够的数据）
-                # 在这种情况下，我们应该从文件中读取数据并返回，确保返回的数据量是正确的
-                self.logger.info(f"all_data 不完整（{len(all_data)} 条），但文件中的数据量正确（已导出 {exported_count} 条），从文件读取数据以确保返回的数据量正确")
+            # 优化：如果有输出路径，数据已经通过回调函数导出到文件，从文件读取数据返回
+            # 如果没有输出路径，返回累积的数据（向后兼容）
+            if self.output_path:
+                # 数据已经导出到文件，从文件读取数据返回
                 try:
+                    self.logger.info(f"从文件读取数据以返回（共 {final_count} 条数据）")
                     all_data = self._read_from_csv(self.output_path, max_rows=final_count)
                     self.logger.info(f"从文件读取数据完成，共 {len(all_data)} 条数据")
                 except Exception as read_error:
-                    self.logger.warning(f"从文件读取数据失败: {read_error}，将返回不完整的 all_data")
-                    # 如果读取失败，返回不完整的 all_data，但 final_count 是正确的，CLI 会使用 final_count 显示正确的数据量
+                    self.logger.warning(f"从文件读取数据失败: {read_error}，将返回空列表")
+                    all_data = []
+            else:
+                # 没有输出路径，返回累积的数据（向后兼容）
+                if len(all_data) > final_count:
+                    all_data = all_data[:final_count]
             
             return all_data
 
@@ -552,6 +532,8 @@ class DataExporter:
         """
         if show_progress:
             pbar = self._create_progress_bar(position, desc)
+        else:
+            pbar = None
         
         try:
             max_rows_info = f" - 最大行数: {max_rows}" if max_rows else ""
@@ -561,7 +543,11 @@ class DataExporter:
             start_timestamp = self._iso_to_timestamp(start_time)
             end_timestamp = self._iso_to_timestamp(end_time)
             
-            all_data = []  # 存储所有分页的数据
+            # 优化：不再在内存中累积所有数据，只存储当前页数据
+            # 如果有回调函数，数据通过回调导出，不需要在内存中存储
+            # 如果没有回调函数，为了向后兼容，仍然累积数据
+            all_data = []  # 只有在没有回调函数时才累积数据
+            total_count = 0  # 跟踪总数据量，但不存储所有数据（有回调时）
             reached_max_rows = False  # 标记是否达到最大行数
 
             # 处理断点恢复：如果有恢复上下文，使用保存的游标信息
@@ -641,6 +627,9 @@ class DataExporter:
                     self.logger.warning("本次查询未返回 series 数据")
                     break
                 
+                # 优化：只存储当前页的数据，不累积
+                page_data = []  # 当前页的数据
+                
                 # 合并所有 series 的数据
                 for series in series_list:
                     column_names = series.get("column_names", [])
@@ -651,9 +640,19 @@ class DataExporter:
                     
                     # 将二维数组转换为字典列表
                     for row in values:
-                        # 检查是否达到最大行数
-                        if max_rows and len(all_data) >= max_rows:
+                        # 检查是否达到最大行数（基于总数据量或累积数据量）
+                        current_count = total_count + len(page_data) if page_callback else len(all_data)
+                        if max_rows and current_count >= max_rows:
                             reached_max_rows = True
+                            # 如果达到限制，计算还可以添加多少条数据
+                            remaining = max_rows - current_count
+                            if remaining > 0:
+                                # 还可以添加部分数据
+                                row_dict = {}
+                                for i, col_name in enumerate(column_names):
+                                    if i < len(row):
+                                        row_dict[col_name] = row[i]
+                                page_data.append(row_dict)
                             self.logger.info(f"已达到最大行数限制: {max_rows}，停止获取数据")
                             break
                         
@@ -661,16 +660,29 @@ class DataExporter:
                         for i, col_name in enumerate(column_names):
                             if i < len(row):
                                 row_dict[col_name] = row[i]
-                        all_data.append(row_dict)
+                        page_data.append(row_dict)
                     
                     # 如果达到最大行数，跳出 series 循环
                     if reached_max_rows:
                         break
                 
-                # 更新进度条
+                # 更新总数据量
+                total_count += len(page_data)
+                
+                # 如果有回调函数，数据通过回调导出，不累积到内存
+                # 如果没有回调函数，为了向后兼容，累积数据
+                if page_callback:
+                    # 有回调函数：不累积数据，通过回调导出
+                    pass  # page_data 将在回调中处理
+                else:
+                    # 没有回调函数：累积数据（向后兼容）
+                    all_data.extend(page_data)
+                
+                # 更新进度条（使用总数据量）
                 if position in self.progress_bars and self.current_tasks.get(position) == desc:
                     max_info = f"/{max_rows}" if max_rows else ""
-                    status = f"{desc} [已获取 {len(all_data)}{max_info} 条数据，第 {page_count} 页]"
+                    display_count = total_count if page_callback else len(all_data)
+                    status = f"{desc} [已获取 {display_count}{max_info} 条数据，第 {page_count} 页]"
                     self.progress_bars[position].set_description(status)
                     self.progress_bars[position].refresh()
                 
@@ -689,15 +701,17 @@ class DataExporter:
                             'slice_start': start_time,
                             'slice_end': end_time
                         })
-                        page_callback(all_data.copy(), page_count, None, context)  # total_pages 暂时设为 None，因为我们不知道总数
+                        # 优化：传递当前页数据，而不是累积的所有数据
+                        page_callback(page_data.copy(), page_count, None, context)  # total_pages 暂时设为 None，因为我们不知道总数
                     except Exception as callback_error:
                         self.logger.warning(f"页面回调函数执行失败: {callback_error}")
 
                 # 检查是否应该停止（回调函数可能设置了停止标志）
                 if stop_flags and stop_flags.get('should_stop', False):
-                    self.logger.info(f"收到停止信号，停止继续查询（已获取 {len(all_data)} 条数据）")
+                    display_count = total_count if page_callback else len(all_data)
+                    self.logger.info(f"收到停止信号，停止继续查询（已获取 {display_count} 条数据）")
                     break
-
+                
                 # 如果达到最大行数，停止查询
                 if reached_max_rows:
                     self.logger.info(f"已达到最大行数限制: {max_rows}，停止查询")
@@ -713,13 +727,23 @@ class DataExporter:
             
             if position in self.progress_bars and self.current_tasks.get(position) == desc:
                 stop_reason = "达到最大行数限制" if reached_max_rows else "数据查询完毕"
-                final_status = f"{desc} [完成，共 {len(all_data)} 条数据，{page_count} 页，{stop_reason}]"
+                final_count = total_count if page_callback else len(all_data)
+                final_status = f"{desc} [完成，共 {final_count} 条数据，{page_count} 页，{stop_reason}]"
                 self.progress_bars[position].set_description(final_status)
                 self.progress_bars[position].refresh()
             
             stop_reason = "达到最大行数限制" if reached_max_rows else "数据查询完毕"
-            self.logger.info(f"数据获取完成 - 共获取 {len(all_data)} 条数据，{page_count} 页，停止原因: {stop_reason}")
-            return all_data
+            final_count = total_count if page_callback else len(all_data)
+            self.logger.info(f"数据获取完成 - 共获取 {final_count} 条数据，{page_count} 页，停止原因: {stop_reason}")
+            
+            # 如果有回调函数，数据已经通过回调导出，返回空列表或从文件读取
+            # 如果没有回调函数，返回累积的数据（向后兼容）
+            if page_callback:
+                # 数据已经通过回调导出，不需要返回数据
+                return []
+            else:
+                # 向后兼容：返回累积的数据
+                return all_data
             
         except Exception as e:
             self.logger.error(f"获取数据失败 - {desc} - 错误: {str(e)}")
@@ -1025,7 +1049,7 @@ class DataExporter:
         except Exception as e:
             self.logger.error(f"从断点恢复导出失败: {e}")
             return None
-
+    
     def __del__(self):
         """清理所有进度条"""
         for pbar in self.progress_bars.values():
