@@ -24,40 +24,18 @@ cd obs-data-exporter
 pip install -r requirements.txt
 ```
 
-或者使用 pip 安装：
-
-```bash
-pip install -e .
-```
-
 ## 使用方法
 
 ### 基本用法
 
 ```bash
-obs-data-exporter \
-  --api-url "https://api.example.com/data" \
+python -m exporter.cli \
+  --api-domain "https://api.example.com/data" \
+  --api-key "your-api-key" \
+  --dql 'L("default")::re(`.*`):(host, service, source) { }' \
+  --start-time "2025/11/12T23:46:30+08:00" \
+  --end-time "2025/11/13T00:46:30+08:00" \
   --output "/path/to/output.csv"
-```
-
-### 使用 API 密钥
-
-可以通过环境变量设置：
-
-```bash
-export API_KEY="your-api-key"
-obs-data-exporter \
-  --api-url "https://api.example.com/data" \
-  --output "/path/to/output.csv"
-```
-
-或者通过命令行参数：
-
-```bash
-obs-data-exporter \
-  --api-url "https://api.example.com/data" \
-  --output "/path/to/output.csv" \
-  --api-key "your-api-key"
 ```
 
 ## 注意事项
