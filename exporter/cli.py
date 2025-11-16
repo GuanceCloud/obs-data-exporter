@@ -6,7 +6,7 @@ from .exporter import DataExporter
 
 
 @click.command()
-@click.option('--api-domain', required=True, help='API 域名（如：https://cn3-openapi.guance.com）')
+@click.option('--api-domain', required=True, help='API 域名（如：https://openapi.example.com）')
 @click.option('--output', required=True, type=click.Path(), help='输出 CSV 文件路径')
 @click.option('--api-key', help='API 密钥（可选，也可以从环境变量 API_KEY 获取）')
 @click.option('--dql', type=str, required=True, help='DQL 查询语句')

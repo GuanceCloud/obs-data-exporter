@@ -40,12 +40,21 @@ python -m exporter.cli \
   --output "/path/to/output.csv"
 ```
 
+### 参数说明
+
+| 参数 | 是否必需 | 说明 | 示例 |
+|------|---------|------|------|
+| `--api-domain` | 是 | 数据查询的站点 OpenAPI 域名地址 | `https://openapi.example.com` |
+| `--api-key` | 是 | API 密钥。 | `your-api-key` |
+| `--output` | 是 | 输出 CSV 文件路径 | `/path/to/output.csv` |
+| `--dql` | 是 | DQL 查询语句 | `L("default")::re(\`.*\`):(host, service, source) { }` |
+| `--start-time` | 是 | 开始时间（ISO 格式） | `2024-01-01T00:00:00+08:00` |
+| `--end-time` | 是 | 结束时间（ISO 格式） | `2024-01-01T23:59:59+08:00` |
+| `--time-slice` | 否 | 时间切片大小（分钟），用于将时间范围分割成多个段进行导出。默认值为 1 分钟 | `5` |
+| `--max-rows` | 否 | 最大导出行数。达到此数量或数据查询完毕时停止。默认值为 10000 行 | `100000` |
+
 ## 注意事项
 
 - 请确保 API URL 正确且可访问
 - 请确保有写入输出文件的权限
 - 日志文件会保存在当前工作目录的 `export.log` 文件中
-
-## 开发
-
-当前版本包含基本的框架结构，具体的 API 调用和 CSV 导出逻辑需要根据实际需求进行实现。
