@@ -618,7 +618,7 @@ class DataExporter:
                     break
                 
                 _next_cursor_time = result["content"]["data"][0].get("next_cursor_time", "")
-                _trace_id = result.get("trace_id", "")
+                _trace_id = result.get("traceId", "")
                 self.logger.info(f"查询结果: {_next_cursor_time}, trace_id: {_trace_id}")
                 if _next_cursor_time == -1:
                     self.logger.info(f"最后一次查询结果: {result}")
