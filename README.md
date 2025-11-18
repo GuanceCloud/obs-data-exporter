@@ -45,7 +45,7 @@ python -m exporter.cli \
 | 参数 | 是否必需 | 说明 | 示例 |
 |------|---------|------|------|
 | `--api-domain` | 是 | 数据查询的站点 OpenAPI 域名地址 | `https://openapi.example.com` |
-| `--api-key` | 是 | API 密钥。 | `your-api-key` |
+| `--api-key` | 是 | 在 对应站点的 `工作空间` -> `管理` -> `API Keys 管理` 中创建 `API Key` | `your-api-key`  |
 | `--output` | 是 | 输出 CSV 文件路径 | `/path/to/output.csv` |
 | `--dql` | 是 | DQL 查询语句 | `L("default")::re(\`.*\`):(host, service, source) { }` |
 | `--start-time` | 是 | 开始时间（ISO 格式） | `2024-01-01T00:00:00+08:00` |
