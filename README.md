@@ -1,10 +1,10 @@
 # OBS Data Exporter
 
-OBS Data Exporter 是一个用于从远程 API 获取数据并导出到 CSV 文件的工具。
+OBS Data Exporter 是一个用于从观测云远程 OpenAPI 获取数据并导出到 CSV 文件的 CLI 工具。
 
 ## 特性
 
-- 调用远程 API 获取数据
+- 调用远程 OpenAPI 获取数据
 - 将数据导出到 CSV 文件
 - 提供详细的进度显示
 - 支持日志记录
@@ -55,6 +55,6 @@ python -m exporter.cli \
 
 ## 注意事项
 
-- 请确保 API URL 正确且可访问
+- 请确保 OpenAPI domain 正确且可访问
 - 请确保有写入输出文件的权限
-- 日志文件会保存在当前工作目录的 `export.log` 文件中
+- CLI 的执行日志会保存在当前工作目录的 `export.log` 文件中
