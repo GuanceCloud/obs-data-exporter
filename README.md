@@ -30,7 +30,7 @@ pip install -r requirements.txt
 
 ```bash
 python -m exporter.cli \
-  --api-domain "https://api.example.com/data" \
+  --api-domain "https://api.example.com" \
   --api-key "your-api-key" \
   --dql 'L("default")::re(`.*`):(host, service, source) { }' \
   --start-time "2025/11/12T23:46:30+08:00" \
